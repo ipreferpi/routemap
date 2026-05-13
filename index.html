@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Route Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin="" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1d1d1f; }
+  body { display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 12px 16px; background: #1f2937; color: #fff; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header input[type="file"] { color: #fff; font-size: 13px; }
+  header label { font-size: 12px; opacity: 0.85; }
+  header input[type="number"] { width: 60px; padding: 3px 6px; border: 1px solid #4b5563; border-radius: 4px; background: #111827; color: #fff; font-size: 12px; }
+  #status { font-size: 12px; opacity: 0.9; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #map { flex: 1; background: #e5e7eb; }
+  aside { width: 240px; background: #f9fafb; border-left: 1px solid #e5e7eb; padding: 14px; overflow-y: auto; font-size: 13px; }
+  aside h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 600; }
+  .stat { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f3f4f6; }
+  .stat span:last-child { font-variant-numeric: tabular-nums; font-weight: 500; }
+  .legend { margin-top: 16px; }
+  .gradient-bar { height: 12px; border-radius: 6px; background: linear-gradient(to right, #2563eb, #06b6d4, #22c55e, #eab308, #ef4444); margin: 6px 0 4px; }
+  .legend-labels { display: flex; justify-content: space-between; font-size: 11px; color: #6b7280; font-variant-numeric: tabular-nums; }
+  .markers-legend { margin-top: 14px; }
+  .marker-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; color: #4b5563; }
+  .marker-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); }
+  .help { margin-top: 18px; font-size: 12px; color: #6b7280; line-height: 1.5; }
+  .help code { background: #e5e7eb; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+  .error { color: #b91c1c; background: #fee2e2; padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-top: 10px; }
+  .leaflet-tooltip.route-tip { background: rgba(17, 24, 39, 0.92); color: #fff; border: none; padding: 6px 8px; font-size: 12px; line-height: 1.4; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+  .leaflet-tooltip.route-tip::before { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Route Map</h1>
+  <div class="controls">
+    <input type="file" id="file" accept=".csv,text/csv" />
+    <label>Accel threshold (mph/s)
+      <input type="number" id="accel-threshold" value="3" min="0.5" step="0.5" />
+    </label>
+    <span id="status"></span>
+  </div>
+</header>
+<main>
+  <div id="map"></div>
+  <aside>
+    <h2>Summary</h2>
+    <div class="stat"><span>Points</span><span id="stat-points">—</span></div>
+    <div class="stat"><span>Distance</span><span id="stat-distance">—</span></div>
+    <div class="stat"><span>Duration</span><span id="stat-duration">—</span></div>
+    <div class="stat"><span>Avg speed</span><span id="stat-avg">—</span></div>
+    <div class="stat"><span>Max speed</span><span id="stat-max">—</span></div>
+    <div class="stat"><span>Accelerations</span><span id="stat-accel">—</span></div>
+    <div class="stat"><span>Decelerations</span><span id="stat-decel">—</span></div>
+
+    <div class="legend">
+      <h2>Speed (mph)</h2>
+      <div class="gradient-bar"></div>
+      <div class="legend-labels">
+        <span id="legend-min">0</span>
+        <span id="legend-mid">—</span>
+        <span id="legend-max">—</span>
+      </div>
+    </div>
+
+    <div class="markers-legend">
+      <h2>Markers</h2>
+      <div class="marker-row"><span class="marker-dot" style="background:#10b981"></span>Quick acceleration</div>
+      <div class="marker-row"><span class="marker-dot" style="background:#ef4444"></span>Quick deceleration</div>
+    </div>
+
+    <div class="help">
+      Upload a CSV with columns for latitude, longitude, and time. Common headers are auto-detected (<code>lat</code>, <code>lon</code>/<code>lng</code>, <code>time</code>/<code>timestamp</code>). Timestamps can be ISO 8601 or unix seconds/milliseconds.
+    </div>
+    <div id="error" class="error" style="display:none"></div>
+  </aside>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script>
+  const map = L.map('map').setView([37.7749, -122.4194], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let routeLayer = L.layerGroup().addTo(map);
+  let markersLayer = L.layerGroup().addTo(map);
+
+  const LAT_KEYS = ['latitude', 'lat', 'y'];
+  const LON_KEYS = ['longitude', 'lon', 'lng', 'long', 'x'];
+  const TIME_KEYS = ['timestamp', 'time', 'datetime', 'date', 'utc', 't'];
+
+  function findColumn(headers, candidates) {
+    const lower = headers.map(h => (h || '').toLowerCase().trim());
+    for (const cand of candidates) {
+      const idx = lower.indexOf(cand);
+      if (idx !== -1) return headers[idx];
+    }
+    for (const cand of candidates) {
+      const idx = lower.findIndex(h => h.includes(cand));
+      if (idx !== -1) return headers[idx];
+    }
+    return null;
+  }
+
+  function parseTime(value) {
+    if (value === null || value === undefined || value === '') return NaN;
+    if (typeof value === 'number') {
+      return value < 1e12 ? value * 1000 : value;
+    }
+    const s = String(value).trim();
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const n = parseFloat(s);
+      return n < 1e12 ? n * 1000 : n;
+    }
+    const t = Date.parse(s);
+    return isNaN(t) ? NaN : t;
+  }
+
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function speedColor(mph, minMph, maxMph) {
+    const stops = [
+      [0.00, [37, 99, 235]],
+      [0.25, [6, 182, 212]],
+      [0.50, [34, 197, 94]],
+      [0.75, [234, 179, 8]],
+      [1.00, [239, 68, 68]],
+    ];
+    const range = Math.max(maxMph - minMph, 0.001);
+    let t = (mph - minMph) / range;
+    t = Math.max(0, Math.min(1, t));
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i][0]) {
+        const [t0, c0] = stops[i - 1];
+        const [t1, c1] = stops[i];
+        const k = (t - t0) / (t1 - t0);
+        const c = c0.map((v, j) => Math.round(v + (c1[j] - v) * k));
+        return `rgb(${c[0]},${c[1]},${c[2]})`;
+      }
+    }
+    return 'rgb(239,68,68)';
+  }
+
+  function formatTime(ms) {
+    if (!isFinite(ms)) return '—';
+    const d = new Date(ms);
+    return d.toLocaleString();
+  }
+
+  function formatDuration(ms) {
+    if (!isFinite(ms) || ms < 0) return '—';
+    const s = Math.round(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}h ${m}m ${sec}s`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error');
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.style.display = 'block';
+    el.textContent = msg;
+  }
+
+  function setStatus(msg) {
+    document.getElementById('status').textContent = msg || '';
+  }
+
+  function render(points) {
+    routeLayer.clearLayers();
+    markersLayer.clearLayers();
+
+    if (points.length < 2) {
+      showError('Need at least 2 valid points to draw a route.');
+      return;
+    }
+
+    const segments = [];
+    let totalMeters = 0;
+    let maxMph = 0;
+    let minMph = Infinity;
+
+    for (let i = 1; i < points.length; i++) {
+      const p0 = points[i - 1];
+      const p1 = points[i];
+      const meters = haversineMeters(p0.lat, p0.lon, p1.lat, p1.lon);
+      const dtSec = (p1.t - p0.t) / 1000;
+      const mph = dtSec > 0 ? (meters / dtSec) * 2.2369362921 : 0;
+      totalMeters += meters;
+      if (mph > maxMph) maxMph = mph;
+      if (mph < minMph) minMph = mph;
+      segments.push({ p0, p1, meters, dtSec, mph });
+    }
+
+    if (!isFinite(minMph)) minMph = 0;
+    const colorMin = 0;
+    const colorMax = Math.max(maxMph, 1);
+
+    for (const seg of segments) {
+      const color = speedColor(seg.mph, colorMin, colorMax);
+      const line = L.polyline(
+        [[seg.p0.lat, seg.p0.lon], [seg.p1.lat, seg.p1.lon]],
+        { color, weight: 5, opacity: 0.9, lineCap: 'round' }
+      );
+      const tipHtml = `
+        <div><strong>${seg.mph.toFixed(1)} mph</strong></div>
+        <div>${seg.p1.lat.toFixed(6)}, ${seg.p1.lon.toFixed(6)}</div>
+        <div>${formatTime(seg.p1.t)}</div>
+      `;
+      line.bindTooltip(tipHtml, { sticky: true, className: 'route-tip', direction: 'top' });
+      routeLayer.addLayer(line);
+    }
+
+    const startMarker = L.circleMarker([points[0].lat, points[0].lon], {
+      radius: 6, color: '#fff', weight: 2, fillColor: '#1f2937', fillOpacity: 1
+    }).bindTooltip(`Start &middot; ${formatTime(points[0].t)}`, { className: 'route-tip' });
+    const endMarker = L.circleMarker([points[points.length - 1].lat, points[points.length - 1].lon], {
+      radius: 6, color: '#fff', weight: 2, fillColor: '#6b7280', fillOpacity: 1
+    }).bindTooltip(`End &middot; ${formatTime(points[points.length - 1].t)}`, { className: 'route-tip' });
+    markersLayer.addLayer(startMarker);
+    markersLayer.addLayer(endMarker);
+
+    const threshold = Math.max(0.1, parseFloat(document.getElementById('accel-threshold').value) || 3);
+    let accelCount = 0, decelCount = 0;
+    for (let i = 1; i < segments.length; i++) {
+      const prev = segments[i - 1];
+      const cur = segments[i];
+      const dt = cur.dtSec;
+      if (dt <= 0) continue;
+      const accelMphPerSec = (cur.mph - prev.mph) / dt;
+      if (Math.abs(accelMphPerSec) >= threshold) {
+        const isAccel = accelMphPerSec > 0;
+        if (isAccel) accelCount++; else decelCount++;
+        const marker = L.circleMarker([cur.p0.lat, cur.p0.lon], {
+          radius: 6,
+          color: '#fff',
+          weight: 2,
+          fillColor: isAccel ? '#10b981' : '#ef4444',
+          fillOpacity: 1
+        }).bindTooltip(
+          `<strong>${isAccel ? 'Accel' : 'Decel'}: ${accelMphPerSec.toFixed(1)} mph/s</strong>` +
+          `<br/>${prev.mph.toFixed(1)} → ${cur.mph.toFixed(1)} mph` +
+          `<br/>${formatTime(cur.p0.t)}`,
+          { className: 'route-tip', direction: 'top' }
+        );
+        markersLayer.addLayer(marker);
+      }
+    }
+
+    const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
+    map.fitBounds(bounds, { padding: [40, 40] });
+
+    const totalMs = points[points.length - 1].t - points[0].t;
+    const totalMiles = totalMeters / 1609.344;
+    const avgMph = totalMs > 0 ? totalMiles / (totalMs / 3600000) : 0;
+
+    document.getElementById('stat-points').textContent = points.length;
+    document.getElementById('stat-distance').textContent = totalMiles.toFixed(2) + ' mi';
+    document.getElementById('stat-duration').textContent = formatDuration(totalMs);
+    document.getElementById('stat-avg').textContent = avgMph.toFixed(1) + ' mph';
+    document.getElementById('stat-max').textContent = maxMph.toFixed(1) + ' mph';
+    document.getElementById('stat-accel').textContent = accelCount;
+    document.getElementById('stat-decel').textContent = decelCount;
+    document.getElementById('legend-min').textContent = colorMin.toFixed(0);
+    document.getElementById('legend-mid').textContent = ((colorMin + colorMax) / 2).toFixed(0);
+    document.getElementById('legend-max').textContent = colorMax.toFixed(0);
+
+    showError(null);
+  }
+
+  let lastPoints = null;
+
+  function handleFile(file) {
+    setStatus('Parsing…');
+    showError(null);
+    Papa.parse(file, {
+      header: true,
+      dynamicTyping: false,
+      skipEmptyLines: true,
+      complete: (results) => {
+        try {
+          const headers = results.meta.fields || [];
+          const latCol = findColumn(headers, LAT_KEYS);
+          const lonCol = findColumn(headers, LON_KEYS);
+          const timeCol = findColumn(headers, TIME_KEYS);
+          if (!latCol || !lonCol) {
+            throw new Error(`Could not find latitude/longitude columns. Found headers: ${headers.join(', ')}`);
+          }
+          if (!timeCol) {
+            throw new Error(`Could not find a time column. Found headers: ${headers.join(', ')}`);
+          }
+          const points = [];
+          for (const row of results.data) {
+            const lat = parseFloat(row[latCol]);
+            const lon = parseFloat(row[lonCol]);
+            const t = parseTime(row[timeCol]);
+            if (isFinite(lat) && isFinite(lon) && isFinite(t)) {
+              points.push({ lat, lon, t });
+            }
+          }
+          points.sort((a, b) => a.t - b.t);
+          if (points.length < 2) {
+            throw new Error('Fewer than 2 valid rows after parsing. Check that columns contain numeric coords and parseable timestamps.');
+          }
+          lastPoints = points;
+          render(points);
+          setStatus(`Loaded ${points.length} points from ${file.name}`);
+        } catch (e) {
+          setStatus('');
+          showError(e.message);
+        }
+      },
+      error: (err) => {
+        setStatus('');
+        showError('CSV parse error: ' + err.message);
+      }
+    });
+  }
+
+  document.getElementById('file').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) handleFile(f);
+  });
+
+  document.getElementById('accel-threshold').addEventListener('change', () => {
+    if (lastPoints) render(lastPoints);
+  });
+</script>
+</body>
+</html>
