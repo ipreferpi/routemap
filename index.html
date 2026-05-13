@@ -93,6 +93,7 @@
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
 <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
 <script>
   const map = L.map('map').setView([37.7749, -122.4194], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -101,6 +102,7 @@
   }).addTo(map);
 
   let routeLayer = L.layerGroup().addTo(map);
+  let arrowsLayer = L.layerGroup().addTo(map);
   let markersLayer = L.layerGroup().addTo(map);
 
   const LAT_KEYS = ['latitude', 'lat', 'y'];
@@ -215,6 +217,7 @@
 
   function render(points) {
     routeLayer.clearLayers();
+    arrowsLayer.clearLayers();
     markersLayer.clearLayers();
 
     if (points.length < 2) {
@@ -269,6 +272,26 @@
       line.bindTooltip(tipHtml, { sticky: true, className: 'route-tip', direction: 'top' });
       routeLayer.addLayer(line);
     }
+
+    const fullPath = L.polyline(points.map(p => [p.lat, p.lon]), { opacity: 0, weight: 0 });
+    const arrows = L.polylineDecorator(fullPath, {
+      patterns: [{
+        offset: 25,
+        repeat: 80,
+        symbol: L.Symbol.arrowHead({
+          pixelSize: 11,
+          polygon: true,
+          pathOptions: {
+            stroke: true,
+            color: '#111827',
+            weight: 1.5,
+            fillColor: '#ffffff',
+            fillOpacity: 1
+          }
+        })
+      }]
+    });
+    arrowsLayer.addLayer(arrows);
 
     const startMarker = L.circleMarker([points[0].lat, points[0].lon], {
       radius: 6, color: '#fff', weight: 2, fillColor: '#1f2937', fillOpacity: 1
