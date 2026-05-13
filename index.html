@@ -35,6 +35,7 @@
   .error { color: #b91c1c; background: #fee2e2; padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-top: 10px; }
   .leaflet-tooltip.route-tip { background: rgba(17, 24, 39, 0.92); color: #fff; border: none; padding: 6px 8px; font-size: 12px; line-height: 1.4; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
   .leaflet-tooltip.route-tip::before { display: none; }
+  .tracking-icon { background: transparent; border: none; }
 </style>
 </head>
 <body>
@@ -65,6 +66,7 @@
     <div class="stat"><span>Max speed</span><span id="stat-max">—</span></div>
     <div class="stat"><span>Accelerations</span><span id="stat-accel">—</span></div>
     <div class="stat"><span>Decelerations</span><span id="stat-decel">—</span></div>
+    <div class="stat"><span>Tracking gaps</span><span id="stat-gaps">—</span></div>
 
     <div class="legend">
       <h2 id="legend-title">Speed (mph)</h2>
@@ -80,6 +82,7 @@
       <h2>Markers</h2>
       <div class="marker-row"><span class="marker-dot" style="background:#10b981"></span>Quick acceleration</div>
       <div class="marker-row"><span class="marker-dot" style="background:#ef4444"></span>Quick deceleration</div>
+      <div class="marker-row"><span class="marker-dot" style="background:repeating-linear-gradient(45deg,#facc15 0 4px,#000 4px 8px); border-radius:2px"></span>Tracking gap (&gt;15s)</div>
     </div>
 
     <div class="help">
@@ -225,21 +228,28 @@
       return;
     }
 
+    const GAP_THRESHOLD_SEC = 15;
     const segments = [];
     let totalMeters = 0;
     let maxMph = 0;
     let minMph = Infinity;
+    let gapCount = 0;
 
     for (let i = 1; i < points.length; i++) {
       const p0 = points[i - 1];
       const p1 = points[i];
       const meters = haversineMeters(p0.lat, p0.lon, p1.lat, p1.lon);
       const dtSec = (p1.t - p0.t) / 1000;
-      const mph = dtSec > 0 ? (meters / dtSec) * 2.2369362921 : 0;
-      totalMeters += meters;
-      if (mph > maxMph) maxMph = mph;
-      if (mph < minMph) minMph = mph;
-      segments.push({ p0, p1, meters, dtSec, mph });
+      const isGap = dtSec > GAP_THRESHOLD_SEC;
+      const mph = !isGap && dtSec > 0 ? (meters / dtSec) * 2.2369362921 : 0;
+      if (isGap) {
+        gapCount++;
+      } else {
+        totalMeters += meters;
+        if (mph > maxMph) maxMph = mph;
+        if (mph < minMph) minMph = mph;
+      }
+      segments.push({ p0, p1, meters, dtSec, mph, isGap });
     }
 
     if (!isFinite(minMph)) minMph = 0;
@@ -252,7 +262,34 @@
     const stops = colorMode === 'time' ? TIME_GRADIENT : SPEED_GRADIENT;
 
     const HOUR_MS = 3600000;
+    const stopIconHtml = `<svg viewBox="0 0 18 18" width="20" height="20"><rect x="1" y="1" width="16" height="16" fill="#facc15" stroke="#000" stroke-width="2"/><rect x="5" y="4" width="3" height="10" fill="#000"/><rect x="10" y="4" width="3" height="10" fill="#000"/></svg>`;
+    const playIconHtml = `<svg viewBox="0 0 18 18" width="20" height="20"><rect x="1" y="1" width="16" height="16" fill="#facc15" stroke="#000" stroke-width="2"/><polygon points="6,4 6,14 14,9" fill="#000"/></svg>`;
+    const trackingIcon = (html) => L.divIcon({ className: 'tracking-icon', html, iconSize: [20, 20], iconAnchor: [10, 10] });
+
     for (const seg of segments) {
+      if (seg.isGap) {
+        const coords = [[seg.p0.lat, seg.p0.lon], [seg.p1.lat, seg.p1.lon]];
+        const base = L.polyline(coords, { color: '#facc15', weight: 6, opacity: 1, lineCap: 'butt' });
+        const stripes = L.polyline(coords, { color: '#000', weight: 6, opacity: 1, dashArray: '8 8', lineCap: 'butt' });
+        const tipHtml = `
+          <div><strong>Tracking gap</strong></div>
+          <div>${formatDuration(seg.dtSec * 1000)} between points</div>
+          <div>${formatTime(seg.p0.t)} → ${formatTime(seg.p1.t)}</div>
+        `;
+        base.bindTooltip(tipHtml, { sticky: true, className: 'route-tip', direction: 'top' });
+        stripes.bindTooltip(tipHtml, { sticky: true, className: 'route-tip', direction: 'top' });
+        routeLayer.addLayer(base);
+        routeLayer.addLayer(stripes);
+
+        const stopped = L.marker([seg.p0.lat, seg.p0.lon], { icon: trackingIcon(stopIconHtml), zIndexOffset: 800 })
+          .bindTooltip(`<strong>Tracking stopped</strong><br/>${formatTime(seg.p0.t)}`, { className: 'route-tip', direction: 'top' });
+        const started = L.marker([seg.p1.lat, seg.p1.lon], { icon: trackingIcon(playIconHtml), zIndexOffset: 800 })
+          .bindTooltip(`<strong>Tracking started</strong><br/>${formatTime(seg.p1.t)}`, { className: 'route-tip', direction: 'top' });
+        markersLayer.addLayer(stopped);
+        markersLayer.addLayer(started);
+        continue;
+      }
+
       let color;
       if (colorMode === 'time') {
         const minuteInHour = ((seg.p1.t - tStart) % HOUR_MS) / HOUR_MS;
@@ -307,6 +344,7 @@
     for (let i = 1; i < segments.length; i++) {
       const prev = segments[i - 1];
       const cur = segments[i];
+      if (prev.isGap || cur.isGap) continue;
       const dt = cur.dtSec;
       if (dt <= 0) continue;
       const accelMphPerSec = (cur.mph - prev.mph) / dt;
@@ -343,6 +381,7 @@
     document.getElementById('stat-max').textContent = maxMph.toFixed(1) + ' mph';
     document.getElementById('stat-accel').textContent = accelCount;
     document.getElementById('stat-decel').textContent = decelCount;
+    document.getElementById('stat-gaps').textContent = gapCount;
     document.getElementById('gradient-bar').style.background = gradientCss(stops);
     if (colorMode === 'time') {
       document.getElementById('legend-title').textContent = 'Time (repeats hourly)';
